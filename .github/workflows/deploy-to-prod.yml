@@ -33,7 +33,7 @@ jobs:
 
           password: ${{ secrets.FTP_PASSWORD }}
 
-          local-dir: ./dist/
+          local-dir: ./
 
           server-dir: /htdocs/
  
