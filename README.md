@@ -1,2 +1,1 @@
-![Statut du projet](https://img.shields.io/endpoint?
-url=https://raw.githubusercontent.com/Haimrode/mon-premier-workflow-bis/main/badges/badge.json)
+![Statut du projet](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Haimrode/mon-premier-workflow-bis/main/badges/badge.json)
