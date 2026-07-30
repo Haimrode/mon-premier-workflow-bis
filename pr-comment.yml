@@ -1,0 +1,54 @@
+# 🏷️ Nom du workflow
+name: Ajouter un Commentaire Automatique sur une PR
+
+# 🎯 Déclenchement automatique à chaque mise à jour d'une PR
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+# 🔐 Permissions nécessaires pour commenter la PR
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
+# 🏗️ Définition des tâches (jobs) et
+jobs:
+  add-comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Cloner le dépôt
+        uses: actions/checkout@v4
+        with:
+          # ⚠️ Sur une PR, GitHub crée un commit de fusion temporaire.
+          # Sans cette ligne, git log lirait "Merge abc123 into def456"
+          # au lieu de ton vrai message. On demande donc explicitement
+          # le dernier commit de la branche de la PR.
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: 📝 Récupérer le message du dernier commit
+        id: get_commit_message
+        # On écrit le message dans un FICHIER, hors du dépôt.
+        # ⚠️ Pourquoi pas $GITHUB_ENV ? Parce qu'un message de commit malveillant
+        # pourrait contenir le mot de fin de bloc et injecter ses propres
+        # variables d'environnement dans les étapes suivantes.
+        # Un fichier est lu comme une donnée : aucune interprétation possible.
+        run: git log -1 --pretty=%B > "$RUNNER_TEMP/commit-message.txt"
+
+      - name: 💬 Ajouter un commentaire sur la PR
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const msg = fs.readFileSync(
+              path.join(process.env.RUNNER_TEMP, 'commit-message.txt'),
+              'utf8'
+            ).trim();
+            await github.rest.issues.createComment({
+              issue_number: context.payload.pull_request.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 **Nouveau Commit Détecté !**\n\n📝 **Message du Commit :**\n${msg}\n\n📢 _Ce message est généré automatiquement._`
+            });
