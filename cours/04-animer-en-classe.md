@@ -14,18 +14,22 @@
 | Issue **#2** | Le bouton Se connecter ne réagit pas sur mobile — 🟢 **doit rester ouverte** |
 | Issue **#3** | Ajouter un mode sombre — 🟢 **doit rester ouverte** |
 | Issue **#4** | Les dates s'affichent en anglais — 🎯 **celle que l'IA doit trouver** |
-| **PR #5** | `Dates au format francais` — ouverte, **pas mergée**, **sans `Fixes`** |
+| **PR #6** | `Dates au format francais` — ouverte, **pas mergée**, **sans `Fixes`** |
 | Branche | `fix/dates-en-francais` — 2 lignes modifiées |
 | Secret | `API_KEY` (164 caractères — clé OpenAI) |
+
+⚠️ **Le numéro de PR change à CHAQUE remise à zéro** (la précédente était #5). Les numéros d'issues, eux, ne bougent pas. Vérifie le numéro avec `gh pr list` avant la séance, ou utilise simplement le lien de la liste.
 
 **Les 4 liens à ouvrir dans 4 onglets, dans cet ordre :**
 
 ```
 1. https://github.com/Haimrode/mon-premier-workflow-bis/issues
-2. https://github.com/Haimrode/mon-premier-workflow-bis/pull/5
+2. https://github.com/Haimrode/mon-premier-workflow-bis/pulls
 3. https://github.com/Haimrode/mon-premier-workflow-bis/actions
 4. https://github.com/Haimrode/mon-premier-workflow-bis/blob/main/src/app.js
 ```
+
+✅ **Répétition validée le 31/07/2026** — run `30615459869` : 3 issues soumises, **1 retenue**, l'issue #4 fermée, #2 et #3 intactes. Le run reste visible dans Actions : garde-le comme **filet de secours** si la démo en direct échoue.
 
 ---
 
