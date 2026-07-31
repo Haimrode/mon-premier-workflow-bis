@@ -1,0 +1,227 @@
+# 🏷️ Nom du workflow
+name: Fermeture automatique des issues résolues (IA)
+
+# ─────────────────────────────────────────────────────────────────
+# 🎯 DÉCLENCHEUR
+#    Une Pull Request vient d'être FERMÉE.
+#
+#    ⚠️ `closed` ne signifie PAS « mergée ».
+#       Une PR rejetée, abandonnée, fermée à la main déclenche
+#       EXACTEMENT le même événement. D'où le `if:` du job ci-dessous,
+#       qui est le garde-fou le plus important de ce fichier.
+# ─────────────────────────────────────────────────────────────────
+on:
+  pull_request:
+    types: [closed]
+
+# ─────────────────────────────────────────────────────────────────
+# 🔐 PERMISSIONS — c'est une LISTE BLANCHE
+#    Dès que ce bloc existe, tout ce qui n'y figure pas passe à `none`.
+#
+#    issues: write        → commenter ET fermer une issue
+#    contents: read       → nécessaire à actions/checkout
+#    pull-requests: read  → nécessaire à `gh pr diff` (étape 2)
+#
+#    ⚠️ La liste doit contenir EXACTEMENT ce dont les outils du job ont
+#       besoin — ni plus, ni moins. Et elle mord dès qu'on ajoute un
+#       outil : `pull-requests: read` n'est pas là « au cas où », c'est
+#       `gh pr diff` qui l'a rendue nécessaire. Cette commande appelle
+#       GET /repos/{owner}/{repo}/pulls/{n}, un endpoint qui exige la
+#       permission « Pull requests (read) ». Sans elle, sur un dépôt
+#       PRIVÉ, l'étape 2 échoue en 403 « Resource not accessible by
+#       integration ». Sur un dépôt public elle passe : le bug ne se
+#       voit pas en démo et frappe au premier vrai usage.
+#
+#    ❌ On ne met rien de plus. C'est le premier workflow du cours qui
+#       FERME quelque chose : jusqu'ici on ajoutait (un commentaire),
+#       maintenant on détruit un état. Une erreur ne se rattrape plus
+#       en supprimant un commentaire.
+# ─────────────────────────────────────────────────────────────────
+permissions:
+  issues: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  detecter-issues-resolues:
+    # ─────────────────────────────────────────────────────────────
+    # 🛡️ LA LIGNE À NE JAMAIS OUBLIER
+    #    Sans elle, une PR REJETÉE fermerait quand même les issues.
+    #    On effacerait du travail à faire parce qu'on a refusé le
+    #    correctif. Le workflow serait vert, le backlog faux.
+    # ─────────────────────────────────────────────────────────────
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      # ─────────────────────────────────────────────────────────────
+      # 1️⃣ Récupérer le dépôt (on a besoin de scripts/match-issues.js)
+      # ─────────────────────────────────────────────────────────────
+      - name: 📥 Cloner le dépôt
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ─────────────────────────────────────────────────────────────
+      # 2️⃣ Le DIFF de la Pull Request : le code qui vient de changer
+      #    `gh` est préinstallé sur les runners GitHub, mais il exige
+      #    un jeton dans la variable GH_TOKEN — sinon : « gh auth login ».
+      #
+      #    On écrit le diff dans un FICHIER, pas dans une variable
+      #    d'environnement : un diff dépasse très vite la taille
+      #    confortable d'une variable shell.
+      #
+      #    💡 `wc -c` compte des OCTETS, pas des caractères. En UTF-8,
+      #       « é » pèse 2 octets et un emoji 4. Le script Node, lui,
+      #       compte de vrais caractères : les deux chiffres affichés
+      #       ne sont donc pas exprimés dans la même unité.
+      # ─────────────────────────────────────────────────────────────
+      - name: 🔍 Récupérer le diff de la Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh pr diff "$PR_NUMBER" > diff.txt
+          echo "📏 Taille du diff : $(wc -c < diff.txt) octets"
+
+      # ─────────────────────────────────────────────────────────────
+      # 3️⃣ Les ISSUES ENCORE OUVERTES : les problèmes non résolus
+      #    --json number,title,body → sortie machine, pas du texte
+      #                               décoré pour un humain
+      #    --limit 50               → borne le volume envoyé à l'IA
+      #
+      #    💰 C'est CETTE limite-là qui pilote la facture, bien plus que
+      #       la troncature du diff. Pire cas : 50 issues × 1 000
+      #       caractères ≈ 58 000 caractères, contre 12 000 pour le diff.
+      #       Environ 83 % de ce qu'on paie vient des issues.
+      #
+      #    💡 `gh issue list` exclut les Pull Requests. L'endpoint REST
+      #       /issues, lui, les inclut — c'est un classique.
+      # ─────────────────────────────────────────────────────────────
+      - name: 📋 Lister les issues encore ouvertes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh issue list --state open --limit 50 --json number,title,body > issues.json
+          echo "📌 Issues ouvertes : $(jq 'length' issues.json)"
+
+      # ─────────────────────────────────────────────────────────────
+      # 4️⃣ Le rapprochement sémantique, confié à l'IA
+      #    Le script lit deux fichiers, écrit un troisième.
+      #    Il tronque le diff, sérialise les issues en JSON, puis VALIDE
+      #    la réponse : numéro inventé, type incorrect, doublon → jetés.
+      #    Et il refuse en bloc si l'IA propose plus de 3 fermetures.
+      # ─────────────────────────────────────────────────────────────
+      - name: 🤖 Demander à l'IA quelles issues ce code résout
+        env:
+          # 🔒 Le secret de CE dépôt s'appelle API_KEY (créé à l'exemple 04),
+          #    alors que le script attend la variable OPENAI_API_KEY.
+          #    À gauche du `:` = le nom de la VARIABLE lue par le script.
+          #    À droite      = le nom du SECRET stocké dans GitHub.
+          #    Les deux n'ont aucune obligation de se ressembler : cette ligne
+          #    est justement le branchement entre les deux.
+          #
+          #    💡 Le cours écrit `secrets.OPENAI_API_KEY`. Un nom de secret qui
+          #       dit quelle API il ouvre vaut mieux qu'un « API_KEY » générique
+          #       — dans six mois, on ne saura plus. À renommer un jour.
+          OPENAI_API_KEY: ${{ secrets.API_KEY }}
+        run: node scripts/match-issues.js diff.txt issues.json matches.json
+
+      # ─────────────────────────────────────────────────────────────
+      # 5️⃣ Passer à l'action : commenter, puis fermer
+      #
+      #    🛡️ La justification (`raison`) est un texte produit par l'IA
+      #       à partir de contenu écrit par des inconnus. On ne la fait
+      #       JAMAIS transiter par la ligne de commande : on l'écrit
+      #       dans un fichier, et on utilise `--body-file`.
+      #
+      #    🛡️ Aucune interpolation ${{ }} dans ce `run:` en dehors du
+      #       bloc `env:` — même règle que dans l'exemple 07.
+      #
+      #    🔁 La boucle est TOLÉRANTE AUX PANNES. Une issue verrouillée,
+      #       déjà fermée, ou hors de portée du jeton fait échouer `gh`.
+      #       Avec `set -e`, le job s'arrêterait net au milieu du lot :
+      #       une issue commentée « fermée automatiquement » mais encore
+      #       ouverte, et toutes les suivantes jamais traitées. On
+      #       continue donc, on compte, on récapitule, et on sort en
+      #       échec à la fin s'il y a eu au moins un problème.
+      # ─────────────────────────────────────────────────────────────
+      - name: ✅ Commenter et fermer les issues identifiées
+        env:
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL:    ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+
+          # 🛡️ Garde : si l'étape précédente a échoué (ou a été neutralisée
+          #    par un `continue-on-error: true`), matches.json n'existe pas
+          #    et `jq` afficherait « Could not open file matches.json ».
+          if [ ! -f matches.json ]; then
+            echo "❌ Fichier matches.json introuvable."
+            echo "   L'étape « Demander à l'IA » n'a pas produit sa sortie."
+            echo "   → La vraie erreur est dans le log de cette étape-là, pas ici."
+            exit 1
+          fi
+
+          NB=$(jq '.matches | length' matches.json)
+
+          if [ "$NB" -eq 0 ]; then
+            echo "🤷 Aucune issue à fermer pour cette PR. Rien à faire."
+            exit 0
+          fi
+
+          echo "🎯 $NB issue(s) à traiter."
+
+          SUCCES=0
+          ECHECS=0
+
+          for i in $(seq 0 $((NB - 1))); do
+            NUMERO=$(jq -r ".matches[$i].issue" matches.json)
+
+            # La justification part dans un fichier, jamais dans la commande
+            jq -r ".matches[$i].raison" matches.json > raison.txt
+
+            {
+              echo "🤖 **Cette issue semble résolue par la Pull Request #${PR_NUMBER}.**"
+              echo ""
+              echo "**Analyse de l'IA :**"
+              echo ""
+              sed 's/^/> /' raison.txt
+              echo ""
+              echo "🔗 ${PR_URL}"
+              echo ""
+              echo "---"
+              echo "_Issue fermée automatiquement par GitHub Actions. Rouvrez-la si l'analyse est fausse._"
+            } > commentaire.md
+
+            # `if ! commande` : la seule façon simple de neutraliser `set -e`
+            # sur UNE commande précise, sans le désactiver pour tout le script.
+            if ! gh issue comment "$NUMERO" --body-file commentaire.md; then
+              echo "::warning::Issue #${NUMERO} : commentaire impossible. Elle n'a PAS été fermée."
+              ECHECS=$((ECHECS + 1))
+              continue
+            fi
+
+            if ! gh issue close "$NUMERO" --reason completed; then
+              echo "::warning::Issue #${NUMERO} : commentée mais NON fermée (verrouillée ? déjà fermée ?)."
+              ECHECS=$((ECHECS + 1))
+              continue
+            fi
+
+            SUCCES=$((SUCCES + 1))
+            echo "✅ Issue #${NUMERO} commentée puis fermée."
+          done
+
+          echo "─────────────────────────────────────────"
+          echo "📊 Récapitulatif : ${SUCCES} fermée(s), ${ECHECS} en échec, sur ${NB} tentative(s)."
+
+          if [ "$ECHECS" -gt 0 ]; then
+            echo "❌ Au moins une issue n'a pas pu être traitée : le job est marqué en échec."
+            exit 1
+          fi
