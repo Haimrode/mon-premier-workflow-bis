@@ -13,7 +13,7 @@ const THEME = "clair"; // seul thème disponible pour l'instant
 // 📅 Affichage des dates
 // ─────────────────────────────────────────────────────────────
 function formaterDate(date) {
-  return date.toLocaleDateString("fr-FR", {
+  return date.toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -22,7 +22,7 @@ function formaterDate(date) {
 }
 
 function formaterHeure(date) {
-  return date.toLocaleTimeString("fr-FR", {
+  return date.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
   });
